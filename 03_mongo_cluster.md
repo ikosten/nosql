@@ -492,3 +492,50 @@ switched to db admin
 Unable to acquire security key
 ```
 К сожалению, пока не удалось настроить аутентификацию для кластера.
+
+
+Перенесем виртуалки в Европу europe-west1-c;, т.к. в США закончились ресурсы
+for i in {1..4}; do gcloud compute instances set-disk-auto-delete mongo$i --zone us-central1-a --disk mongo$i --no-auto-delete; done;
+for i in {1..4}; do gcloud compute disks snapshot mongo$i --snapshot-names backup-mongo$i --zone us-central1-a; done;
+for i in {1..4}; do gcloud compute instances delete mongo$i --zone us-central1-a; done;
+for i in {1..4}; do gcloud compute disks snapshot mongo$i --snapshot-names mongo$i-snapshot --zone us-central1-a; done;
+for i in {1..4}; do gcloud compute disks delete mongo$i --zone us-central1-a; done;
+for i in {1..4}; do gcloud compute disks create mongo$i --source-snapshot mongo$i-snapshot --zone europe-west1-c; done;
+for i in {1..4}; do gcloud compute instances create mongo$i --zone=europe-west1-c --machine-type=e2-small --subnet=default --network-tier=PREMIUM --maintenance-policy=MIGRATE --service-account=1022317557791-compute@developer.gserviceaccount.com --scopes=https://www.googleapis.com/auth/cloud-platform --disk name=mongo$i,boot=yes,mode=rw --no-shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring --reservation-affinity=any; done;
+for i in {1..4}; do gcloud compute snapshots delete backup-mongo$i mongo$i-snapshot; done;
+gcloud compute project-info add-metadata --metadata google-compute-default-region=europe-west1,google-compute-default-zone=europe-west1-c
+
+Стартуем виртуалки
+for i in {1..4}; do gcloud compute instances start mongo$i --zone europe-west1-c; done;
+
+-- создадим каталоги mongo-security
+for i in {1..4}; do gcloud compute ssh mongo$i --zone europe-west1-c --command='sudo mkdir /home/mongo/mongo-security && sudo chmod 777 /home/mongo/mongo-security' & done;
+
+-- генерируем кей файл на 1 инстансе
+openssl rand -base64 756 > /home/mongo/mongo-security/keyfile
+chmod 400 /home/mongo/mongo-security/keyfile
+
+-- Поделимся ключом
+scp kosten@34.78.18.194:/home/mongo/mongo-security/keyfile ~/Downloads/keyfile
+scp ~/Downloads/keyfile kosten@35.187.63.18:/home/mongo/mongo-security/keyfile
+scp ~/Downloads/keyfile kosten@35.240.108.161:/home/mongo/mongo-security/keyfile
+scp ~/Downloads/keyfile kosten@34.77.185.93:/home/mongo/mongo-security/keyfile
+for i in {2..4}; do gcloud compute ssh mongo$i --zone europe-west1-c --command='chmod 400 /home/mongo/mongo-security/keyfile' & done;
+
+-- запускаем репликасеты с аутентификацией и ключом
+kosten@mongo1:~$ mongod --configsvr --dbpath /home/mongo/dbc1 --port 27001 --replSet RScfg --fork --logpath /home/mongo/dbc1/dbc1.log --pidfilepath /home/mongo/dbc1/dbc1.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo1:~$ mongod --shardsvr --dbpath /home/mongo/db11 --port 27011 --replSet RS1 --fork --logpath /home/mongo/db11/db11.log --pidfilepath /home/mongo/db11/db11.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo1:~$ mongod --shardsvr --dbpath /home/mongo/db21 --port 27021 --replSet RS2 --fork --logpath /home/mongo/db21/db21.log --pidfilepath /home/mongo/db21/db21.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo1:~$ mongod --shardsvr --dbpath /home/mongo/db31 --port 27031 --replSet RS3 --fork --logpath /home/mongo/db31/db31.log --pidfilepath /home/mongo/db31/db31.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo2:~$ mongod --configsvr --dbpath /home/mongo/dbc2 --port 27002 --replSet RScfg --fork --logpath /home/mongo/dbc2/dbc2.log --pidfilepath /home/mongo/dbc2/dbc2.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo2:~$ mongod --shardsvr --dbpath /home/mongo/db12 --port 27012 --replSet RS1 --fork --logpath /home/mongo/db12/db12.log --pidfilepath /home/mongo/db12/db12.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo2:~$ mongod --shardsvr --dbpath /home/mongo/db22 --port 27022 --replSet RS2 --fork --logpath /home/mongo/db22/db22.log --pidfilepath /home/mongo/db22/db22.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo2:~$ mongod --shardsvr --dbpath /home/mongo/db32 --port 27032 --replSet RS3 --fork --logpath /home/mongo/db32/db32.log --pidfilepath /home/mongo/db32/db32.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo3:~$ mongod --configsvr --dbpath /home/mongo/dbc3 --port 27003 --replSet RScfg --fork --logpath /home/mongo/dbc3/dbc3.log --pidfilepath /home/mongo/dbc3/dbc3.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo3:~$ mongod --shardsvr --dbpath /home/mongo/db13 --port 27013 --replSet RS1 --fork --logpath /home/mongo/db13/db13.log --pidfilepath /home/mongo/db13/db13.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo3:~$ mongod --shardsvr --dbpath /home/mongo/db23 --port 27023 --replSet RS2 --fork --logpath /home/mongo/db23/db23.log --pidfilepath /home/mongo/db23/db23.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo3:~$ mongod --shardsvr --dbpath /home/mongo/db33 --port 27033 --replSet RS3 --fork --logpath /home/mongo/db33/db33.log --pidfilepath /home/mongo/db33/db33.pid --bind_ip_all --auth --keyFile /home/mongo/mongo-security/keyfile
+
+-- запускаем шарды с ключом
+kosten@mongo3:~$ mongos --configdb RScfg/mongo1:27001,mongo2:27002,mongo3:27003 --port 27000 --fork --logpath /home/mongo/dbs2/dbs2.log --pidfilepath /home/mongo/dbs2/dbs2.pid --keyFile /home/mongo/mongo-security/keyfile
+kosten@mongo4:~$ mongos --configdb RScfg/mongo1:27001,mongo2:27002,mongo3:27003 --port 27000 --fork --logpath /home/mongo/dbs1/dbs1.log --pidfilepath /home/mongo/dbs1/dbs1.pid --keyFile /home/mongo/mongo-security/keyfile
